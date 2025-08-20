@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using backend.Services.Users;
+using backend.Services.Auth;
 using backend.DTOs.User;
 using backend.Models;
 
@@ -10,66 +12,82 @@ namespace backend.Controllers
     public class AuthController : ControllerBase
     {
         private readonly IUserService _userService;
+        private readonly ITokenService _tokenService;
 
-        public AuthController(IUserService userService)
+        public AuthController(IUserService userService, ITokenService tokenService)
         {
             _userService = userService;
+            _tokenService = tokenService;
         }
 
+        [AllowAnonymous]
         [HttpPost("register")]
-        public async Task<ActionResult<User>> Register(UserDTO userDto)
+        public async Task<ActionResult<AuthResponseDTO>> Register([FromBody] RegisterDTO dto)
         {
-            if (string.IsNullOrEmpty(userDto.Name) ||
-                string.IsNullOrEmpty(userDto.Email) ||
-                string.IsNullOrEmpty(userDto.Password))
+            if (string.IsNullOrWhiteSpace(dto.Name) ||
+                string.IsNullOrWhiteSpace(dto.Email) ||
+                string.IsNullOrWhiteSpace(dto.Password))
             {
-                return BadRequest("Name, Email and Password are required.");
+                return BadRequest("Name, Email aur Password required hain.");
             }
 
-            var user = await _userService.Register(userDto);
-            if (user == null)
-            {
-                return BadRequest("Registration failed.");
-            }
+            var user = await _userService.RegisterAsync(dto);
+            if (user is null)
+                return Conflict("Email already exists.");
 
-            return Ok(new
+            var (token, exp) = _tokenService.GenerateToken(user);
+
+            return Ok(new AuthResponseDTO
             {
-                message = "User registered successfully",
-                user
+                Message = "User registered successfully",
+                Token = token,
+                ExpiresAtUtc = exp,
+                User = new { user.Id, user.Name, user.Email, user.Role }
             });
         }
 
+        [AllowAnonymous]
         [HttpPost("login")]
-        public async Task<ActionResult<User>> Login(UserDTO userDto)
+        public async Task<ActionResult<AuthResponseDTO>> Login([FromBody] LoginDTO dto)
         {
-            if (string.IsNullOrEmpty(userDto.Email) || string.IsNullOrEmpty(userDto.Password))
-            {
-                return BadRequest("Email and Password are required.");
-            }
+            if (string.IsNullOrWhiteSpace(dto.Email) || string.IsNullOrWhiteSpace(dto.Password))
+                return BadRequest("Email aur Password required hain.");
 
-            var user = await _userService.Login(userDto);
-            if (user == null)
-            {
+            var user = await _userService.LoginAsync(dto);
+            if (user is null)
                 return Unauthorized("Invalid email or password.");
-            }
 
-            return Ok(new
+            var (token, exp) = _tokenService.GenerateToken(user);
+
+            return Ok(new AuthResponseDTO
             {
-                message = "Login successful",
-                user
+                Message = "Login successful",
+                Token = token,
+                ExpiresAtUtc = exp,
+                User = new { user.Id, user.Name, user.Email, user.Role }
             });
         }
 
+        [Authorize] // token required
         [HttpPost("logout")]
         public async Task<ActionResult> Logout()
         {
-            var result = await _userService.Logout();
-            if (!result)
-            {
-                return BadRequest("Logout failed.");
-            }
+            var result = await _userService.LogoutAsync();
+            if (!result) return BadRequest("Logout failed.");
+            return Ok(new { message = "Logged out successfully (client should discard the token)" });
+        }
 
-            return Ok(new { message = "Logged out successfully" });
+        // Example: current user info (claims se)
+        [Authorize]
+        [HttpGet("me")]
+        public ActionResult<object> Me()
+        {
+            var id = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+            var name = User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+            var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+
+            return Ok(new { id, email, name, role });
         }
     }
 }

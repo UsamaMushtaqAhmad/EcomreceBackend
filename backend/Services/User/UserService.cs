@@ -2,6 +2,7 @@
 using backend.Dapper;
 using backend.DTOs.User;
 using backend.Models;
+using BCrypt.Net;
 
 namespace backend.Services.Users
 {
@@ -14,36 +15,51 @@ namespace backend.Services.Users
             _context = context;
         }
 
-        // =============== REGISTER ===============
-        public async Task<User?> Register(UserDTO userDto)
+        public async Task<User?> GetByEmailAsync(string email)
         {
-            var query = @"INSERT INTO Users (Name, Email, Password, Role) 
-                          OUTPUT INSERTED.* 
-                          VALUES (@Name, @Email, @Password, 'user')";
-
-            using var connection = _context.CreateConnection();
-            return await connection.QuerySingleOrDefaultAsync<User>(
-                query,
-                new { userDto.Name, userDto.Email, userDto.Password }
-            );
+            const string q = "SELECT TOP 1 * FROM Users WHERE Email = @Email";
+            using var con = _context.CreateConnection();
+            return await con.QuerySingleOrDefaultAsync<User>(q, new { Email = email });
         }
 
-        // =============== LOGIN ===============
-        public async Task<User?> Login(UserDTO userDto)
+        public async Task<User?> RegisterAsync(RegisterDTO dto)
         {
-            var query = "SELECT * FROM Users WHERE Email = @Email AND Password = @Password";
+            // Email unique check
+            var existing = await GetByEmailAsync(dto.Email);
+            if (existing is not null) return null;
 
-            using var connection = _context.CreateConnection();
-            return await connection.QuerySingleOrDefaultAsync<User>(
-                query,
-                new { userDto.Email, userDto.Password }
-            );
+            var hash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+
+            const string q = @"
+INSERT INTO Users (Name, Email, PasswordHash, Role)
+OUTPUT INSERTED.*
+VALUES (@Name, @Email, @PasswordHash, @Role);";
+
+            using var con = _context.CreateConnection();
+            var user = await con.QuerySingleOrDefaultAsync<User>(q, new
+            {
+                dto.Name,
+                dto.Email,
+                PasswordHash = hash,
+                Role = string.IsNullOrWhiteSpace(dto.Role) ? "user" : dto.Role!.Trim().ToLower()
+            });
+
+            return user;
         }
 
-        // =============== LOGOUT ===============
-        public Task<bool> Logout()
+        public async Task<User?> LoginAsync(LoginDTO dto)
         {
-            
+            var user = await GetByEmailAsync(dto.Email);
+            if (user is null) return null;
+
+            var ok = BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash);
+            return ok ? user : null;
+        }
+
+        public Task<bool> LogoutAsync()
+        {
+            // JWT stateless hota hai — server pe kuch store nahi.
+            // Optional: maintain blacklist/refresh-tokens if needed.
             return Task.FromResult(true);
         }
     }

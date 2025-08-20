@@ -5,8 +5,9 @@ namespace backend.Services.Users
 {
     public interface IUserService
     {
-        Task<User?> Register(UserDTO userDto);
-        Task<User?> Login(UserDTO userDto);
-        Task<bool> Logout();  // logout ka method
+        Task<User?> RegisterAsync(RegisterDTO userDto);
+        Task<User?> LoginAsync(LoginDTO userDto);
+        Task<bool> LogoutAsync(); // stateless demo
+        Task<User?> GetByEmailAsync(string email);
     }
 }
