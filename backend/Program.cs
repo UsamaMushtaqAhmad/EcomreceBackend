@@ -1,34 +1,45 @@
 using backend.Dapper;
-using backend.Services.Users;
+using backend.Services;
 using backend.Services.Auth;
+using backend.Services.NewFolder;
+using backend.Services.Poroduct;
+using backend.Services.Users;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.FileProviders;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Controllers + Swagger
+// ===== Add services (Controllers + Swagger) =====
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Dapper + Services
+// ===== Dapper context + application services =====
 builder.Services.AddSingleton<DapperContext>();
+
+// Existing services
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 
-// CORS (Angular dev)
+// Category & Product services
+builder.Services.AddScoped<ICategoryService, CategoryService>();
+builder.Services.AddScoped<IProductService, ProductService>();
+
+// ===== CORS (for Angular dev on localhost:4200) =====
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngularDev", policy =>
     {
         policy.WithOrigins("http://localhost:4200")
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .AllowCredentials();
     });
 });
 
-// ===== JWT Auth Config =====
+// ===== JWT Authentication Configuration =====
 var key = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key missing");
 var issuer = builder.Configuration["Jwt:Issuer"];
 var audience = builder.Configuration["Jwt:Audience"];
@@ -40,7 +51,7 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = true;
+    options.RequireHttpsMetadata = false; // set false if you test over HTTP locally
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -51,13 +62,13 @@ builder.Services.AddAuthentication(options =>
         ValidIssuer = issuer,
         ValidAudience = audience,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
-        ClockSkew = TimeSpan.FromMinutes(1) // tight expiry window
+        ClockSkew = TimeSpan.FromMinutes(1)
     };
 });
 
 var app = builder.Build();
 
-// Swagger
+// ===== Middleware pipeline =====
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -66,10 +77,20 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+// ===== Serve static files (wwwroot + uploads) =====
+app.UseStaticFiles(); // wwwroot ke liye
+
+// Extra: serve "uploads" folder directly as /uploads
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(
+        Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "uploads")),
+    RequestPath = "/uploads"
+});
+
 app.UseCors("AllowAngularDev");
 
-// ORDER MATTERS:
-app.UseAuthentication();  // <-- JWT
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
